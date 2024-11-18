@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
+df = None
+
 # Function to dynamically run the algorithm and update the GUI
 def run_algorithm(algorithm_module, output_var=None, output_frame=None):
     try:
@@ -76,7 +78,7 @@ def on_closing():
 # Create the main application window
 root = tk.Tk()
 root.title("Predictive Analysis and Classification of Meteorite Landings Using Data Mining")
-root.geometry("800x500")
+root.geometry("900x500")
 # Attach the quit handler
 root.protocol("WM_DELETE_WINDOW", on_closing)
 
@@ -547,16 +549,41 @@ initialize_empty_map()
 tab3 = ttk.Frame(notebook)
 notebook.add(tab3, text="Clustering - Group Meteorites Geographically")
 
-tab3_left_frame = tk.Frame(tab3, width=400)
+tab3_left_frame = tk.Frame(tab3, width=250)
 tab3_left_frame.pack(side="left", fill="y", padx=10, pady=10)
 
-tab3_button = ttk.Button(tab3_left_frame, text="Run Clustering", command=lambda: tab3_function())
-tab3_button.pack(pady=10)
+# Add scrollable frame for cluster centers and toggle clusters
+scrollable_frame = tk.Canvas(tab3_left_frame, width=250, height=600)  # Adjust height to fit content
+scrollable_frame.pack(side="left", fill="y", expand=False)
 
+# Create a scrollbar and attach it to the canvas
+scrollbar = ttk.Scrollbar(tab3_left_frame, orient="vertical", command=scrollable_frame.yview)
+scrollbar.pack(side="left", fill="y")
+scrollable_frame.configure(yscrollcommand=scrollbar.set)
+
+# Create an inner frame to hold content
+inner_frame = tk.Frame(scrollable_frame)
+scrollable_frame.create_window((0, 0), window=inner_frame, anchor="nw")
+
+# Function to update scrollable region
+def configure_scroll_region(event):
+    scrollable_frame.configure(scrollregion=scrollable_frame.bbox("all"))
+
+inner_frame.bind("<Configure>", configure_scroll_region)
+
+tab3_side_pane = tk.LabelFrame(inner_frame, text="Clustering Options", width=300)
+tab3_side_pane.pack(fill="x", padx=5, pady=5)
+
+# Slider for selecting the number of clusters (k)
+tk.Label(tab3_side_pane, text="Number of Clusters (k):").pack(anchor="w", padx=5, pady=2)
+k_slider = tk.Scale(tab3_side_pane, from_=2, to=10, orient="horizontal", resolution=1)
+k_slider.set(5)  # Default value
+k_slider.pack(fill="x", padx=5, pady=5)
+
+# Subtabs for graphs
 tab3_output_frame = tk.Frame(tab3, width=400)
 tab3_output_frame.pack(side="right", fill="both", expand=True, padx=10, pady=10)
 
-# Subtabs for graphs
 output_notebook = ttk.Notebook(tab3_output_frame)
 output_notebook.pack(expand=True, fill="both")
 
@@ -568,11 +595,86 @@ output_notebook.add(subtab1, text="Graph 1")
 output_notebook.add(subtab2, text="Graph 2")
 output_notebook.add(subtab3, text="Graph 3")
 
+def update_map_visibility():
+    try:
+        global df  # Access the global dataset
+        if df is None:
+            raise ValueError("Dataset is not available. Run clustering first.")
+
+        # Re-run the clustering algorithm
+        k_value = k_slider.get()
+        from algorithms.clustering import run
+        _, centers, _ = run(k=k_value)  # We only need the centers
+
+        # Get visibility states from checkboxes
+        visible_clusters = [i for i, var in enumerate(cluster_visibility_vars) if var.get() == 1]
+
+        # Clear and re-plot the map
+        for widget in subtab1.winfo_children():
+            widget.destroy()
+
+        # Re-draw the first plot with visibility rules
+        fig, ax = plt.subplots(figsize=(8, 6))
+        from mpl_toolkits.basemap import Basemap
+        m = Basemap(projection="mill", llcrnrlat=-90, urcrnrlat=90, llcrnrlon=-180, urcrnrlon=180, resolution="c", ax=ax)
+        m.drawcoastlines()
+        m.drawcountries()
+
+        # Plot all data points as black dots (always visible)
+        x, y = m(df["reclong"].to_numpy(), df["reclat"].to_numpy())
+        m.scatter(x, y, c="black", s=10, zorder=5, alpha=0.8)
+
+        # Draw cluster circles based on visibility
+        for cluster_idx, center in enumerate(centers):
+            if cluster_idx in visible_clusters:
+                # Draw cluster circles
+                center_lat, center_long, _ = center
+                center_x, center_y = m(center_long, center_lat)
+
+                # Calculate cluster radius
+                cluster_points = df[df["cluster"] == cluster_idx]
+                cluster_x, cluster_y = m(cluster_points["reclong"].to_numpy(), cluster_points["reclat"].to_numpy())
+                cluster_radius = max(
+                    np.sqrt((cluster_x - center_x) ** 2 + (cluster_y - center_y) ** 2)
+                )
+                circle = plt.Circle(
+                    (center_x, center_y),
+                    cluster_radius * 0.3,
+                    color=f"C{cluster_idx}",
+                    alpha=0.3,
+                    zorder=4,
+                    transform=ax.transData
+                )
+                ax.add_patch(circle)
+
+        # Add legend and title
+        legend_elements = [
+            plt.Line2D([0], [0], marker="o", color=f"C{i}", label=f"Cluster {i + 1}",
+                       markersize=10, linestyle="None", alpha=0.5) for i in visible_clusters
+        ]
+        ax.legend(handles=legend_elements, loc="upper right", fontsize=8, title="Clusters")
+        plt.title("Clustered Meteorites on World Map")
+
+        # Display updated map
+        canvas = FigureCanvasTkAgg(fig, master=subtab1)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    except Exception as e:
+        tk.messagebox.showerror("Error", f"Failed to update map visibility: {e}")
+
+
+# Function to run clustering with user-selected k
 def tab3_function():
     try:
+        global df  # Make the dataset accessible globally
+        # Get the value of k from the slider
+        k_value = k_slider.get()
+
         # Import clustering script and generate graphs
         from algorithms.clustering import run
-        plots = run()
+        plots, centers, df_local = run(k=k_value)  # Unpack the returned tuple
+        df = df_local  # Update the global df variable
 
         # Clear existing widgets in subtabs
         for frame in [subtab1, subtab2, subtab3]:
@@ -597,8 +699,86 @@ def tab3_function():
         canvas3.draw()
         canvas3.get_tk_widget().pack(fill="both", expand=True)
 
+        # Update the cluster centers text boxes
+        for i, center in enumerate(centers):
+            lat, long, _ = center
+            cluster_center_vars[i].set(f"Lat: {lat:.2f}, Long: {long:.2f}")
+
+        # Clear remaining text boxes if fewer clusters are generated
+        for i in range(len(centers), len(cluster_center_vars)):
+            cluster_center_vars[i].set("N/A")
+
+        # Update the cluster visibility checkboxes
+        for checkbox in checkbox_widgets:
+            checkbox.destroy()  # Remove old checkboxes
+
+        cluster_visibility_vars.clear()
+        for i in range(k_value):
+            var = tk.IntVar(value=1)  # Default to visible
+            cluster_visibility_vars.append(var)
+            checkbox = ttk.Checkbutton(
+                cluster_visibility_frame,
+                text=f"Cluster {i + 1}",
+                variable=var,
+                command=update_map_visibility
+            )
+            checkbox.pack(anchor="w", padx=5, pady=2)
+            checkbox_widgets.append(checkbox)
+
     except Exception as e:
         tk.messagebox.showerror("Error", f"Failed to generate graphs: {e}")
+
+# Run clustering button
+tab3_button = ttk.Button(tab3_side_pane, text="Run Clustering", command=tab3_function)
+tab3_button.pack(pady=10)
+
+# Function to generate and display the elbow method report
+def show_k_optimization_report():
+    try:
+        # Import the elbow method function
+        from algorithms.clustering import generate_elbow_report
+
+        # Generate the elbow method report
+        elbow_fig = generate_elbow_report()
+
+        # Create a new window to display the report
+        report_window = tk.Toplevel(root)
+        report_window.title("K Optimization Report")
+        report_window.geometry("800x600")
+
+        # Embed the report figure in the new window
+        canvas = FigureCanvasTkAgg(elbow_fig, master=report_window)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+
+    except Exception as e:
+        tk.messagebox.showerror("Error", f"An unexpected error occurred: {e}")
+
+# Run K Optimization Report button
+k_optimization_button = ttk.Button(tab3_side_pane, text="Run K Optimization Report", command=show_k_optimization_report)
+k_optimization_button.pack(side="left", padx=5, pady=5)
+
+# Frame for cluster center text boxes
+cluster_center_frame = tk.LabelFrame(inner_frame, text="Cluster Centers (Lat, Long)", width=300)
+cluster_center_frame.pack(fill="x", padx=5, pady=5)
+
+# Frame for cluster visibility checkboxes
+cluster_visibility_frame = tk.LabelFrame(inner_frame, text="Toggle Clusters", width=300)
+cluster_visibility_frame.pack(fill="x", padx=5, pady=5)
+
+# Create variables to hold the states of checkboxes
+cluster_visibility_vars = [tk.IntVar(value=1) for _ in range(10)]  # Default all clusters to visible
+checkbox_widgets = []  # Store checkbox widgets to update dynamically
+
+# Create text boxes for displaying cluster centers
+cluster_center_vars = []
+for i in range(10):  # 10 boxes for cluster centers
+    var = tk.StringVar(value="N/A")
+    cluster_center_vars.append(var)
+    label = tk.Label(cluster_center_frame, text=f"Cluster {i + 1}:", anchor="w")
+    label.grid(row=i, column=0, padx=5, pady=2, sticky="w")
+    entry = tk.Entry(cluster_center_frame, textvariable=var, state="readonly", width=20)
+    entry.grid(row=i, column=1, padx=5, pady=2)
 
 # Tab 4 - Regression to Predict Year
 tab4 = ttk.Frame(notebook)
