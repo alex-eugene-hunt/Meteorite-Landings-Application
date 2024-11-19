@@ -1,4 +1,7 @@
-# Script for Tab 1 (Classification)
+# Team 1: Abdul Aziz, Alex Hunt, Barjinder Singh
+# CS-5593-995: Professor Gruenwald, FA24
+# Data Mining Project
+# This python code implements the classification of our project
 
 import pandas as pd
 import numpy as np

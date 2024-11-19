@@ -1,3 +1,8 @@
+# Team 1: Abdul Aziz, Alex Hunt, Barjinder Singh
+# CS-5593-995: Professor Gruenwald, FA24
+# Data Mining Project
+# This python code implements the GUI of our project
+
 import sys
 import numpy as np
 import pandas as pd
